@@ -18,6 +18,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LinkTokenInterface} from "@chainlink/contracts/src/v0.8/shared/interfaces/LinkTokenInterface.sol";
 import {IRouterClient} from "src/CCIP/IRouterClient.sol";
 import {Client} from "src/CCIP/libraries/Client.sol";
+import {AutomationCompatibleInterface} from "@chainlink/contracts/src/v0.8/automation/AutomationCompatibleInterface.sol";
 
 /// @title Smart contract that implements part of the bridge infrastructure.
 /// @author Aleksei Gerasev
@@ -30,7 +31,7 @@ import {Client} from "src/CCIP/libraries/Client.sol";
 /// to send addresses of all users who invested usdc in this transaction. it is not necessary to
 /// implement logic on dst chain. You can leave _ccipReceive functions empty.
 /// This is only implemented on any 4 chains that support ccip.
-contract Bridge {
+contract Bridge is AutomationCompatibleInterface {
     //////////////
     /// Errors ///
     //////////////
@@ -148,14 +149,36 @@ contract Bridge {
                 address[] memory users,
                 uint256[] memory balances
             ) = _getUsersAndBalances(destinationChainSelector);
+        }
+    }
 
-            // send to CCIP (unused returned value just for now)
-            _sendToCCIP(
-                destinationChainSelector,
-                i_receiverContract,
-                users,
-                balances
-            );
+    function checkUpkeep(
+        bytes calldata /* checkData */
+    )
+        external
+        view
+        override
+        returns (bool upkeepNeeded, bytes memory /* performData */)
+    {
+        //get chain selector
+        uint64 chainSelector = abi.decode(checkData, (uint64));
+
+        upkeepNeeded =
+            s_chainToDeposited[chainSelector].totalAmount >= TARGET_SUM;
+        // We don't use the checkData in this example. The checkData is defined when the Upkeep was registered.
+    }
+
+    function performUpkeep(bytes calldata /* performData */) external override {
+        uint64 chainSelector = abi.decode(performData, (uint64));
+
+        if (s_chainToDeposited[chainSelector].totalAmount >= TARGET_SUM) {
+            (
+                address[] memory users,
+                uint256[] memory balances
+            ) = _getUsersAndBalances(chainSelector);
+
+            // send to CCIP
+            _sendToCCIP(chainSelector, i_receiverContract, users, balances);
         }
     }
 
